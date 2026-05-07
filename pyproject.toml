@@ -13,7 +13,8 @@ classifiers = ["License :: OSI Approved :: MIT License"]
 dependencies = [
   "wolf",
   "sqlmodel",
-  "orjson"
+  "orjson",
+  "structlog",
 ]
 
 [project.optional-dependencies]
