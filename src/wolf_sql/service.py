@@ -1,31 +1,69 @@
-from orjson import loads, dumps
 from contextlib import contextmanager
-from dataclasses import dataclass
-from collections.abc import Iterator
+from collections.abc import Iterator, Collection
+from orjson import loads, dumps
 from sqlmodel import Session, SQLModel, create_engine
 from wolf.app import Application
 from wolf.app.pluggability import Installable
 
 
-@dataclass(kw_only=True)
-class SQLDatabase(Installable):
-    url: str
-    echo: bool = False
-    models_registries: tuple[type[SQLModel], ...] = (SQLModel,)
+class SQLDatabase(Installable, Collection[type[SQLModel]]):
+    _models: set
+    _finalized: bool
 
-    def __post_init__(self):
+    def __init__(self, engine, models: Collection[type[SQLModel]]):
+        self.engine = engine
+        self._models = set(models)
+        self._finalized = False
+
+    def __contains__(self, model: type[SQLModel]):
+        return model in self._models
+
+    def __iter__(self):
+        return iter(self._models)
+
+    def __len__(self):
+        return len(self._models)
+
+    def __bool__(self):
+        return self._finalized
+
+    def add(self, model: type[SQLModel]):
+        if self._finalized:
+            raise RuntimeError('Database is already finalized.')
+        self._models.add(model)
+
+    def discard(self, model: type[SQLModel]):
+        if self._finalized:
+            raise RuntimeError('Database is already finalized.')
+        self._models.discard(model)
+
+    @classmethod
+    def from_url(
+            cls,
+            url: str,
+            models: Collection[type[SQLModel]]=(),
+            echo: bool=False
+    ):
         engine = create_engine(
-            self.url,
-            echo=self.echo,
+            url,
+            echo=echo,
             json_serializer=dumps,
             json_deserializer=loads
         )
-        for registry in self.models_registries:
-            registry.metadata.create_all(engine)
-        self.engine = engine
+        return cls(engine, models)
 
     def install(self, application: Application):
         application.services.register_factory(Session, self.sqlsession)
+
+    def finalize(self):
+        if self._finalized:
+            raise RuntimeError('Database is already finalized.')
+        try:
+            for model in self:
+                model.metadata.create_all(self.engine)
+        finally:
+            self._finalized = True
+        return self
 
     @contextmanager
     def sqlsession(self) -> Iterator[Session]:
