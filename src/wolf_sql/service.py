@@ -2,68 +2,55 @@ from contextlib import contextmanager
 from collections.abc import Iterator, Collection
 from orjson import loads, dumps
 from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.main import default_registry
 from wolf.app import Application
 from wolf.app.pluggability import Installable
+from sqlalchemy.orm import registry
+from sqlalchemy.engine import Engine
 
 
-class SQLDatabase(Installable, Collection[type[SQLModel]]):
-    _models: set
-    _finalized: bool
+class SQLDatabase(Installable, Collection[registry]):
+    __slots__ = ('_initialized', '_registries', 'engine')
 
-    def __init__(self, engine, models: Collection[type[SQLModel]]):
-        self.engine = engine
-        self._models = set(models)
-        self._finalized = False
+    _initialized: bool
+    _registries: frozenset[registry]
 
-    def __contains__(self, model: type[SQLModel]):
-        return model in self._models
-
-    def __iter__(self):
-        return iter(self._models)
-
-    def __len__(self):
-        return len(self._models)
-
-    def __bool__(self):
-        return self._finalized
-
-    def add(self, model: type[SQLModel]):
-        if self._finalized:
-            raise RuntimeError('Database is already finalized.')
-        self._models.add(model)
-
-    def discard(self, model: type[SQLModel]):
-        if self._finalized:
-            raise RuntimeError('Database is already finalized.')
-        self._models.discard(model)
-
-    @classmethod
-    def from_url(
-            cls,
-            url: str,
-            models: Collection[type[SQLModel]]=(),
-            echo: bool=False
+    def __init__(
+            self,
+            url: str, *,
+            echo: bool = False,
+            registries: Collection[registry] = (default_registry,)
     ):
-        engine = create_engine(
+        self.engine: Engine = create_engine(
             url,
             echo=echo,
             json_serializer=dumps,
             json_deserializer=loads
         )
-        return cls(engine, models)
+        self._initialized = False
+        self._registries = frozenset(registries)
+
+    def __contains__(self, model: type[SQLModel]):
+        return model in self._registries
+
+    def __iter__(self):
+        return iter(self._registries)
+
+    def __len__(self):
+        return len(self._registries)
 
     def install(self, application: Application):
         application.services.register_factory(Session, self.sqlsession)
-        application.listen('finalize', self.finalize)
+        application.listen('init', self.initialize)
 
-    def finalize(self):
-        if self._finalized:
-            raise RuntimeError('Database is already finalized.')
+    def initialize(self):
+        if self._initialized:
+            raise RuntimeError('Database is already initialized.')
         try:
-            for model in self:
-                model.metadata.create_all(self.engine)
+            for registry in self:
+                registry.metadata.create_all(self.engine)
         finally:
-            self._finalized = True
+            self._initialized = True
         return self
 
     @contextmanager
