@@ -54,6 +54,7 @@ class SQLDatabase(Installable, Collection[type[SQLModel]]):
 
     def install(self, application: Application):
         application.services.register_factory(Session, self.sqlsession)
+        application.listen('finalize', self.finalize)
 
     def finalize(self):
         if self._finalized:
