@@ -46,7 +46,7 @@ class SQLDatabase(Installable, Collection[registry]):
 
     def install(self, app: Application):
         app.services.register_factory(Session, self.sqlsession)
-        app.lifecycle.on_init.connect(self.initialize)
+        app.events.lifecycle.on_init.connect(self.initialize)
 
     def initialize(self, _, *, config: dict | None = None):
         if self._initialized:
