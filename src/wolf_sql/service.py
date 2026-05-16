@@ -1,5 +1,7 @@
 from contextlib import contextmanager
 from collections.abc import Iterator, Collection
+
+import structlog
 from orjson import loads, dumps
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.main import default_registry
@@ -7,6 +9,9 @@ from wolf.app import Application
 from wolf.app.pluggability import Installable
 from sqlalchemy.orm import registry
 from sqlalchemy.engine import Engine
+
+
+logger = structlog.get_logger("wolf_sql.service")
 
 
 class SQLDatabase(Installable, Collection[registry]):
@@ -39,17 +44,19 @@ class SQLDatabase(Installable, Collection[registry]):
     def __len__(self):
         return len(self._registries)
 
-    def install(self, application: Application):
-        application.services.register_factory(Session, self.sqlsession)
-        application.listen('init', self.initialize)
+    def install(self, app: Application):
+        app.services.register_factory(Session, self.sqlsession)
+        app.lifecycle.on_init.connect(self.initialize)
 
-    def initialize(self):
+    def initialize(self, _, *, config: dict | None = None):
         if self._initialized:
+            logger.error('Database is already initialized.')
             raise RuntimeError('Database is already initialized.')
         try:
             for registry in self:
                 registry.metadata.create_all(self.engine)
         finally:
+            logger.info(f'Database {self} has been initialized.')
             self._initialized = True
         return self
 
